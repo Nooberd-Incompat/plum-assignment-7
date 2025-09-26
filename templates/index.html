@@ -1,0 +1,89 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Medical Report Simplifier</title>
+    <style>
+        body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; margin: 0; padding: 2em; background-color: #f8f9fa; color: #333; }
+        .container { max-width: 800px; margin: auto; background: #fff; padding: 2em; border-radius: 8px; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
+        h1 { color: #0056b3; }
+        form { display: flex; flex-direction: column; gap: 1.5em; }
+        label { font-weight: bold; }
+        input, textarea { padding: 0.8em; border: 1px solid #ccc; border-radius: 4px; font-size: 1em; }
+        textarea { resize: vertical; min-height: 100px; }
+        button { padding: 0.8em 1.2em; background-color: #007bff; color: white; border: none; border-radius: 4px; font-size: 1em; cursor: pointer; transition: background-color 0.2s; }
+        button:hover { background-color: #0056b3; }
+        #results { margin-top: 2em; background-color: #e9ecef; padding: 1.5em; border-radius: 4px; white-space: pre-wrap; word-wrap: break-word; font-family: "Courier New", Courier, monospace; }
+        .hidden { display: none; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Medical Report Simplifier</h1>
+        <p>Enter a User ID and provide a medical report either by pasting text or uploading an image.</p>
+        
+        <form id="reportForm">
+            <div>
+                <label for="userId">User ID</label>
+                <input type="text" id="userId" name="user_id" placeholder="e.g., patient123" required>
+            </div>
+            
+            <div>
+                <label for="reportText">Paste Report Text</label>
+                <textarea id="reportText" name="report_text" placeholder="CBC: Hemoglobin 10.2 g/dL (Low)..."></textarea>
+            </div>
+
+            <div>
+                <label for="reportImage">Or Upload Report Image</label>
+                <input type="file" id="reportImage" name="report_image" accept="image/*">
+            </div>
+            
+            <button type="submit">Simplify Report</button>
+        </form>
+        
+        <div id="loader" class="hidden">Processing...</div>
+        <pre id="results" class="hidden"></pre>
+    </div>
+
+    <script>
+        const form = document.getElementById('reportForm');
+        const resultsDiv = document.getElementById('results');
+        const loader = document.getElementById('loader');
+
+        form.addEventListener('submit', async (event) => {
+            event.preventDefault();
+
+            // Show loader and hide previous results
+            loader.classList.remove('hidden');
+            resultsDiv.classList.add('hidden');
+            resultsDiv.textContent = '';
+
+            const formData = new FormData(form);
+
+            try {
+                const response = await fetch('/simplify-report/', {
+                    method: 'POST',
+                    body: formData
+                });
+
+                const data = await response.json();
+
+                if (!response.ok) {
+                    throw new Error(data.detail || 'Something went wrong');
+                }
+
+                // Display the formatted JSON response
+                resultsDiv.textContent = JSON.stringify(data, null, 2);
+
+            } catch (error) {
+                resultsDiv.textContent = `Error: ${error.message}`;
+            } finally {
+                // Hide loader and show results
+                loader.classList.add('hidden');
+                resultsDiv.classList.remove('hidden');
+            }
+        });
+    </script>
+</body>
+</html>

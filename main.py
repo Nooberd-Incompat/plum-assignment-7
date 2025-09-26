@@ -1,57 +1,91 @@
-from fastapi import FastAPI, UploadFile, File, Form, HTTPException
+from fastapi import FastAPI, UploadFile, File, Form, HTTPException, Request
+from fastapi.responses import HTMLResponse
+from fastapi.templating import Jinja2Templates
 from typing import Optional
 import io
 from PIL import Image
 import pytesseract
 from contextlib import asynccontextmanager
-
-# Import services and the new db_manager
+import numpy  as np
+import cv2
 from services.llm_service import extract_test_data_from_text, get_personalized_summary
 from services.analysis_service import analyze_trends
 from database.db_manager import setup_database, save_report, get_latest_report
 
-# --- Lifespan Event to Set Up Database on Startup ---
+# --- NEW: Configure templates ---
+templates = Jinja2Templates(directory="templates")
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Code to run on startup
     print("Setting up database...")
     setup_database()
     yield
-    # Code to run on shutdown (if any)
     print("Shutting down...")
 
 app = FastAPI(
     title="AI-Powered Medical Report Simplifier",
     description="A stateful API that personalizes and simplifies medical reports.",
-    version="3.0.0", # Version bump for the new feature!
+    version="3.0.0",
     lifespan=lifespan
 )
 
-# (OCR function remains the same)
+# --- NEW: Add a frontend endpoint ---
+@app.get("/", response_class=HTMLResponse)
+async def read_item(request: Request):
+    """Serves the main HTML page for the frontend."""
+    return templates.TemplateResponse("index.html", {"request": request})
+
+def preprocess_image_for_ocr(image_bytes: bytes) -> np.ndarray:
+    """
+    Applies a series of preprocessing steps to an image to improve OCR accuracy.
+    """
+    # 1. Decode the image from bytes to an OpenCV image
+    image_np_array = np.frombuffer(image_bytes, np.uint8)
+    img = cv2.imdecode(image_np_array, cv2.IMREAD_COLOR)
+
+    # 2. Convert to grayscale
+    gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
+
+    # 3. Apply adaptive thresholding to binarize the image (pure black and white)
+    # This is highly effective for cleaning up document backgrounds.
+    binary = cv2.adaptiveThreshold(
+        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
+    )
+
+    # 4. (Optional) Denoise the image. Useful for noisy scans.
+    denoised = cv2.medianBlur(binary, 3)
+    
+    return denoised
+
+# (OCR function and /simplify-report/ endpoint remain the same)
 def perform_ocr(image_bytes: bytes) -> str:
+    """
+    Performs OCR on an in-memory image file after preprocessing.
+    """
     try:
-        image = Image.open(io.BytesIO(image_bytes))
-        text = pytesseract.image_to_string(image.convert('L'))
+        # --- NEW: Preprocess the image first ---
+        preprocessed_image = preprocess_image_for_ocr(image_bytes)
+
+        # --- NEW: Add Tesseract configuration for better accuracy ---
+        # --psm 6 assumes a single uniform block of text, which is good for many reports.
+        custom_config = r'--oem 3 --psm 8'
+        
+        # Pass the preprocessed image directly to pytesseract
+        text = pytesseract.image_to_string(preprocessed_image, config=custom_config)
         return text
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OCR processing failed: {str(e)}")
 
-@app.get("/")
-def read_root():
-    return {"status": "ok", "message": "Welcome to the Medical Report Simplifier API!"}
-
 @app.post("/simplify-report/")
 async def simplify_report(
-    user_id: str = Form(...), # User ID is now a required form field
+    user_id: str = Form(...),
     report_image: Optional[UploadFile] = File(None),
     report_text: Optional[str] = Form(None),
-    # We no longer need the context object from the user
 ):
-    # (Input validation and OCR logic remains the same)
+    # ... (code for this endpoint is unchanged)
     if not report_image and not report_text:
         raise HTTPException(status_code=400, detail="Please provide a report image or text.")
-    # ...
-
+    
     extracted_text = ""
     if report_text:
         extracted_text = report_text
@@ -59,31 +93,29 @@ async def simplify_report(
         image_bytes = await report_image.read()
         extracted_text = perform_ocr(image_bytes)
 
-    # --- NEW WORKFLOW ---
-
-    # 1. Get previous report from DB
     previous_report = get_latest_report(user_id)
     previous_tests = previous_report.get("tests") if previous_report else None
 
-    # 2. Process current report
     extraction_result = extract_test_data_from_text(extracted_text)
     current_tests = extraction_result.get("tests_raw", [])
 
-    # 3. Analyze trends if previous data exists
+    if not current_tests:
+        raise HTTPException(
+            status_code=422, 
+            detail="The AI could not identify any valid medical tests in the provided text. Please check the input."
+        )
+
     if previous_tests:
         current_tests = analyze_trends(current_tests, previous_tests)
 
-    # 4. Generate the personalized summary (we'll just use a placeholder for patient details for now)
     summary_data = get_personalized_summary(current_tests, patient_details=None)
 
-    # 5. Assemble the final report object
     final_report = {
         "user_id": user_id,
         "tests": current_tests,
         "summary_data": summary_data
     }
 
-    # 6. Save the new report to the DB for next time
     save_report(user_id, final_report)
 
     return final_report

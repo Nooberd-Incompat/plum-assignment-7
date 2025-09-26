@@ -3,7 +3,8 @@ def analyze_trends(current_tests: list, previous_tests: list) -> list:
     Compares current test results with previous ones to identify trends.
     """
     # Create a quick lookup dictionary for previous tests
-    previous_tests_map = {test.name.lower(): test for test in previous_tests}
+    # FIX: Use dictionary-style access ['name'] instead of dot notation .name
+    previous_tests_map = {test['name'].lower(): test for test in previous_tests}
 
     for current_test in current_tests:
         test_name_lower = current_test.get("name", "").lower()
@@ -11,7 +12,8 @@ def analyze_trends(current_tests: list, previous_tests: list) -> list:
 
         if previous_test:
             current_value = float(current_test.get("value", 0))
-            previous_value = float(previous_test.value)
+            # FIX: Use dictionary-style access ['value'] instead of dot notation .value
+            previous_value = float(previous_test['value'])
 
             # Add previous value for context
             current_test["previous_value"] = previous_value
