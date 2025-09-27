@@ -1,11 +1,14 @@
 # AI-Powered Medical Report Simplifier
+ngrok link: https://charla-dustless-lopsidedly.ngrok-free.dev
+demo video link: https://drive.google.com/drive/folders/1rxyeHUvbe1NSpDJDa_-JJmaOjZKPOEzP?usp=sharing
+github repository link: https://github.com/Nooberd-Incompat/plum-assignment-7
 
 ## Project Overview
 This project is a backend service built with FastAPI that simplifies medical reports for patients. It accepts typed text or scanned images of reports, extracts key test results, tracks them over time, and provides a personalized, easy-to-understand summary using AI.
 
 ## Features
 - **OCR Support:** Extracts text from uploaded medical report images.
-- **AI-Powered Extraction:** Uses Google's Gemini Pro to identify tests, values, and statuses from raw text, correcting common OCR errors.
+- **AI-Powered Extraction:** Uses Google's Gemini Flash 2.5 to identify tests, values, and statuses from raw text, correcting common OCR errors.
 - **Stateful History:** Stores report history for each user in an SQLite database.
 - **Trend Analysis:** Compares the latest report with the previous one to identify trends (increasing, decreasing, stable).
 - **Personalized Summaries:** Generates empathetic, non-technical explanations of results.
@@ -30,7 +33,7 @@ The application is built using a modular Python backend:
    `python -m venv venv`
    `source venv/bin/activate`  # On Windows: `venv\Scripts\activate`
 4. Install dependencies:
-   `pip install -r requirements.txt`  *(You should create this file by running `pip freeze > requirements.txt`)*
+   `pip install -r requirements.txt`
 5. Create a `.env` file and add your Google API key:
    `GOOGLE_API_KEY="YOUR_API_KEY_HERE"`
 6. Run the application:
@@ -39,17 +42,16 @@ The application is built using a modular Python backend:
 ## API Usage Example (cURL)
 
 ### Submit a Text Report
-curl -X 'POST' \
-  'http://127.0.0.1:8000/simplify-report/' \
-  -H 'accept: application/json' \
-  -H 'Content-Type: multipart/form-data' \
-  -F 'user_id=patient-123' \
-  -F 'report_text=CBC: Hemoglobin 11.9 g/dL (Low)'
+curl -X POST "http://127.0.0.1:8000/simplify-report/" -H "accept: application/json" -F "user_id=patient-789" -F "report_text='CBC: Hemoglobin 11.9 g/dL (Low), Platelets: 250,000 /mcL'"
 
 ### Submit an Image Report
 curl -X 'POST' \
-  'http://127.0.0.1:8000/simplify-report/' \
-  -H 'accept: application/json' \
-  -H 'Content-Type: multipart/form-data' \
-  -F 'user_id=patient-456' \
-  -F 'report_image=@/path/to/your/report.png'
+  'http://127.0.0.1:8000/simplify-report/' \   -H 'accept: application/json' \   -F 'user_id=patient-789' \   -F 'report_image=@/path/to/your/report.png'
+
+### GET /history/{user_id}
+Retrieves all saved reports for a specific user.
+curl -X GET "http://127.0.0.1:8000/history/patient-789"
+
+### POST /debug/preview-prompts/
+Previews the AI prompts that would be generated for a given text input without making an API call.
+curl -X POST "http://127.0.0.1:8000/debug/preview-prompts/" \ -H "accept: application/json" \ -F "user_id=patient-789" \ -F "report_text=CBC: Hemoglobin 11.9 g/dL (Low)"

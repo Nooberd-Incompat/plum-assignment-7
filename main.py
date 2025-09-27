@@ -8,9 +8,9 @@ import pytesseract
 from contextlib import asynccontextmanager
 import numpy  as np
 import cv2
-from services.llm_service import extract_test_data_from_text, get_personalized_summary
+from services.llm_service import create_extraction_prompt, create_summary_prompt, extract_test_data_from_text, get_personalized_summary
 from services.analysis_service import analyze_trends
-from database.db_manager import setup_database, save_report, get_latest_report
+from database.db_manager import get_all_reports, setup_database, save_report, get_latest_report
 
 # --- NEW: Configure templates ---
 templates = Jinja2Templates(directory="templates")
@@ -29,15 +29,19 @@ app = FastAPI(
     lifespan=lifespan
 )
 
+@app.get('/')
+async def root():
+    return {"message": "Welcome to the AI-Powered Medical Report Simplifier API. Visit /docs for API documentation or /home for a simple frontend interface."}
+
 # --- NEW: Add a frontend endpoint ---
-@app.get("/", response_class=HTMLResponse)
+@app.get("/home", response_class=HTMLResponse)
 async def read_item(request: Request):
     """Serves the main HTML page for the frontend."""
     return templates.TemplateResponse("index.html", {"request": request})
 
 def preprocess_image_for_ocr(image_bytes: bytes) -> np.ndarray:
     """
-    Applies a series of preprocessing steps to an image to improve OCR accuracy.
+    Applies a more robust preprocessing pipeline for scanned documents.
     """
     # 1. Decode the image from bytes to an OpenCV image
     image_np_array = np.frombuffer(image_bytes, np.uint8)
@@ -46,35 +50,76 @@ def preprocess_image_for_ocr(image_bytes: bytes) -> np.ndarray:
     # 2. Convert to grayscale
     gray = cv2.cvtColor(img, cv2.COLOR_BGR2GRAY)
 
-    # 3. Apply adaptive thresholding to binarize the image (pure black and white)
-    # This is highly effective for cleaning up document backgrounds.
-    binary = cv2.adaptiveThreshold(
-        gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 2
+    # 3. Apply a Gaussian blur to reduce noise, which helps Otsu's method
+    blurred = cv2.GaussianBlur(gray, (5, 5), 0)
+
+    # 4. Apply Otsu's Binarization. This automatically finds the best threshold.
+    # We invert the image (THRESH_BINARY_INV) so the text is white and the background is black.
+    _, binary_image = cv2.threshold(
+        blurred, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU
     )
-
-    # 4. (Optional) Denoise the image. Useful for noisy scans.
-    denoised = cv2.medianBlur(binary, 3)
     
-    return denoised
+    return binary_image
 
-# (OCR function and /simplify-report/ endpoint remain the same)
+
 def perform_ocr(image_bytes: bytes) -> str:
     """
-    Performs OCR on an in-memory image file after preprocessing.
+    Performs OCR on an in-memory image file using the new preprocessing pipeline.
     """
     try:
-        # --- NEW: Preprocess the image first ---
+        # Preprocess the image using our new, more robust function
         preprocessed_image = preprocess_image_for_ocr(image_bytes)
 
-        # --- NEW: Add Tesseract configuration for better accuracy ---
-        # --psm 6 assumes a single uniform block of text, which is good for many reports.
-        custom_config = r'--oem 3 --psm 8'
+        # --- Tesseract Configuration Change ---
+        # Switch to PSM 3 (fully automatic layout detection), which can be better for tables.
+        custom_config = r'--oem 3 --psm 3'
         
-        # Pass the preprocessed image directly to pytesseract
         text = pytesseract.image_to_string(preprocessed_image, config=custom_config)
         return text
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"OCR processing failed: {str(e)}")
+
+@app.post("/debug/preview-prompts/")
+async def debug_preview_prompts(
+    user_id: str = Form(...),
+    report_image: Optional[UploadFile] = File(None),
+    report_text: Optional[str] = Form(None),
+):
+    """
+    A debug endpoint to see the generated prompts without calling the AI.
+    """
+    # This logic is copied from the main /simplify-report endpoint
+    if not report_image and not report_text:
+        raise HTTPException(status_code=400, detail="Please provide a report...")
+
+    extracted_text = ""
+    if report_text:
+        extracted_text = report_text
+    elif report_image:
+        image_bytes = await report_image.read()
+        preprocessed_image = preprocess_image_for_ocr(image_bytes)
+        extracted_text = pytesseract.image_to_string(preprocessed_image, config=r'--oem 3 --psm 6')
+
+    # Generate the first prompt
+    extraction_prompt = create_extraction_prompt(extracted_text)
+
+    # Simulate the data flow to generate the second prompt
+    # NOTE: This uses a dummy extraction result for preview purposes
+    dummy_extracted_tests = [
+        {"name": "Hemoglobin", "value": 10.2, "unit": "g/dL", "status": "Low"},
+        {"name": "WBC", "value": 11200, "unit": "/uL", "status": "High"}
+    ]
+    previous_report = get_latest_report(user_id)
+    previous_tests = previous_report.get("tests") if previous_report else None
+    if previous_tests:
+        dummy_extracted_tests = analyze_trends(dummy_extracted_tests, previous_tests)
+    
+    summary_prompt = create_summary_prompt(dummy_extracted_tests, patient_details=None)
+    
+    return {
+        "extraction_prompt": extraction_prompt,
+        "summary_prompt_preview": summary_prompt
+    }
 
 @app.post("/simplify-report/")
 async def simplify_report(
@@ -92,6 +137,10 @@ async def simplify_report(
     elif report_image:
         image_bytes = await report_image.read()
         extracted_text = perform_ocr(image_bytes)
+        print("--- RAW OCR OUTPUT ---")
+        print(extracted_text)
+        print("----------------------")
+
 
     previous_report = get_latest_report(user_id)
     previous_tests = previous_report.get("tests") if previous_report else None
@@ -119,3 +168,13 @@ async def simplify_report(
     save_report(user_id, final_report)
 
     return final_report
+
+@app.get("/history/{user_id}")
+async def get_user_history(user_id: str):
+    """
+    Retrieves all saved reports for a specific user.
+    """
+    history = get_all_reports(user_id)
+    if not history:
+        raise HTTPException(status_code=404, detail="No history found for this user.")
+    return history

@@ -44,3 +44,16 @@ def get_latest_report(user_id: str) -> dict | None:
     if row:
         return json.loads(row[0])
     return None
+
+def get_all_reports(user_id: str) -> list:
+    """Retrieves all reports for a given user_id, newest first."""
+    conn = sqlite3.connect(DATABASE_NAME)
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT report_data, timestamp FROM reports WHERE user_id = ? ORDER BY timestamp DESC",
+        (user_id,)
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    # Return a list of dictionaries
+    return [{"report": json.loads(row[0]), "timestamp": row[1]} for row in rows]
